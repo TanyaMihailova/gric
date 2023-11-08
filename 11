@@ -14,3 +14,166 @@
     <property name="eclipselink.logging.level" value="FINEST"/> 
    </properties>
  </persistence-unit>
+
+
+
+package dao;
+
+import javax.naming.Context;
+import javax.naming.InitialContext;
+ 
+import org.eclipse.persistence.config.SessionCustomizer;
+import org.eclipse.persistence.sessions.DatabaseLogin;
+import org.eclipse.persistence.sessions.JNDIConnector;
+import org.eclipse.persistence.sessions.Session;
+import org.eclipse.persistence.sessions.server.ServerSession;
+ 
+/**
+ * See http://wiki.eclipse.org/Customizing_the_EclipseLink_Application_(ELUG) Use for clients that would like to use a
+ * JTA SE pu instead of a RESOURCE_LOCAL SE pu.
+ */
+public class JPAEclipseLinkSessionCustomizer implements SessionCustomizer {
+ 
+  /**
+   * Get a dataSource connection and set it on the session with lookupType=STRING_LOOKUP
+   */
+  public void customize(Session session) throws Exception {
+    JNDIConnector connector = null;
+    Context context = null;
+    try {
+      context = new InitialContext();
+      if(null != context) {
+        connector = (JNDIConnector)session.getLogin().getConnector(); // possible CCE
+        // Change from COMPOSITE_NAME_LOOKUP to STRING_LOOKUP
+        // Note: if both jta and non-jta elements exist this will only change the first one - and may still result in
+        // the COMPOSITE_NAME_LOOKUP being set
+        // Make sure only jta-data-source is in persistence.xml with no non-jta-data-source property set
+        connector.setLookupType(JNDIConnector.STRING_LOOKUP);
+ 
+        // Or, if you are specifying both JTA and non-JTA in your persistence.xml then set both connectors to be safe
+        JNDIConnector writeConnector = (JNDIConnector)session.getLogin().getConnector();
+        writeConnector.setLookupType(JNDIConnector.STRING_LOOKUP);
+        JNDIConnector readConnector =
+            (JNDIConnector)((DatabaseLogin)((ServerSession)session).getReadConnectionPool().getLogin()).getConnector();
+        readConnector.setLookupType(JNDIConnector.STRING_LOOKUP);
+ 
+        System.out.println("_JPAEclipseLinkSessionCustomizer: configured " + connector.getName());
+      }
+      else {
+        throw new Exception("_JPAEclipseLinkSessionCustomizer: Context is null");
+      }
+    }
+    catch(Exception e) {
+      e.printStackTrace();
+    }
+  }
+}
+
+
+package dao;
+
+import javax.persistence.EntityManager;
+import javax.persistence.EntityManagerFactory;
+import javax.persistence.Persistence;
+
+public class JpaUtil {
+	private static EntityManager em = null;
+	private static EntityManagerFactory emf = Persistence.createEntityManagerFactory("OBDViewWebAllOBD");
+	static {
+		createEntityManager();
+	}
+	public static EntityManager createEntityManager() {
+		if (em == null) {
+			em = emf.createEntityManager();
+		}
+		return em;
+	}
+}
+
+
+
+
+package dao;
+
+import java.util.Iterator;
+import java.util.List;
+
+import javax.ejb.Stateless;
+import javax.persistence.EntityManager;
+
+import obd.MyGrid;
+
+@Stateless
+public class GenericDAO {
+	
+	private EntityManager emOBD = JpaUtil.createEntityManager();
+	
+	public MyGrid getBadSAPReplies(String sql) {
+		List<Object> res = (List<Object>) emOBD.createNativeQuery(sql).getResultList();
+		Object[] x = (Object[]) res.get(0);
+		MyGrid grid = new MyGrid(x.length,0);
+		Iterator it = res.iterator();
+		while (it.hasNext()) {
+			Object[] o = (Object[]) it.next();
+			
+			for (int i = 0; i < o.length; i++) {
+                grid.setColumn(i, String.valueOf(o[i]));
+            }
+            grid.addRow();
+			
+		}
+		return grid;
+	}
+
+}
+
+
+
+<?xml version="1.0" encoding="UTF-8"?>
+<persistence version="2.1" xmlns="http://xmlns.jcp.org/xml/ns/persistence" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://xmlns.jcp.org/xml/ns/persistence http://xmlns.jcp.org/xml/ns/persistence/persistence_2_1.xsd">
+	<persistence-unit name="OBDViewWebAllOBD">
+		<jta-data-source>jdbc/ds4</jta-data-source>
+		<!-- <properties>
+			<property name="javax.persistence.jdbc.driver" value="com.ibm.db2.jcc.DB2Driver"/>
+			<property name="javax.persistence.jdbc.url" value="jdbc:db2://10.200.2.87:50000/OBD"/>
+			<property name="javax.persistence.jdbc.user" value="KLIMOV"/>
+			<property name="javax.persistence.jdbc.password" value="Aa123"/>
+		</properties> -->
+		<properties>
+			<property name="eclipselink.session.customizer" value="dao.JPAEclipseLinkSessionCustomizer"/>        
+    		<!-- <property name="eclipselink.target-database" value="org.eclipse.persistence.platform.database.oracle.OraclePlatform"/>  -->
+		</properties>
+	</persistence-unit>
+</persistence>
+
+
+
+
+<server description="new server">
+
+  <!--  Enable features -->
+  <featureManager>
+    <feature>webProfile-7.0</feature>
+    <feature>localConnector-1.0</feature>
+  </featureManager>
+
+  <!-- To access this server from a remote client add a host attribute to 
+    the following element, e.g. host="*"-->
+  <httpEndpoint httpPort="9060" httpsPort="9445" id="defaultHttpEndpoint"/>
+    
+ <library id="DB2JCC4Lib">
+    <fileset dir="D:\openliberty-18.0.0.3\wlp\lib\" includes="db2jcc4.jar, db2jcc_license_cisuz.jar"/>
+  </library>
+
+  <dataSource id="DefaultDataSource" jndiName="jdbc/ds4">
+    <jdbcDriver libraryRef="DB2JCC4Lib"/>
+    <properties.db2.jcc currentSchema="USEROBD" databaseName="OBD" password="Aa123" portNumber="50000" serverName="10.200.2.87" user="KLIMOV"/>
+  </dataSource> 
+  <!-- Automatically expand WAR files and EAR files -->
+  <applicationManager autoExpand="true"/>
+
+
+  <applicationMonitor updateTrigger="mbean"/>
+
+    <webApplication id="OBDViewWebAll" location="OBDViewWebAll.war" name="OBDViewWebAll"/>
+</server>
